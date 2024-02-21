@@ -1,0 +1,49 @@
+version: '3'
+
+dotenv: ['.env.Taskfile.prod']
+
+tasks:
+  default:
+    desc: "print available tasks"
+    cmds:
+      - task -l
+    silent: true
+  oci:builder:create:
+    desc: "create docker builder for OCI tarball creation"
+    cmds:
+      - docker buildx inspect builderx || docker buildx create --driver docker-container --name builderx
+  build-oci:
+    desc: "build OCI tarball"
+    deps:
+      - oci:builder:create
+    cmds:
+      - mkdir -p dist/oci
+      - docker buildx build --builder=builderx
+        --platform=linux/arm64,linux/amd64
+        --build-arg BASE=cgr.dev/chainguard/glibc-dynamic
+        -f Dockerfile .
+        -t opa:latest
+        --output=type=oci,dest=dist/oci/image.tar
+        --provenance=false
+        --progress=plain
+  push-oci:
+    desc: "push OCI tarball to docker registry"
+    vars:
+      TAGS:
+        sh: xargs echo $(git describe --tags) \
+          | xargs echo $(git branch --show-current) \
+          | xargs echo $(git rev-parse --short HEAD) | xargs echo $(if [ "{{.PUSH_WITH_TAG_LATEST}}" = "true" ]; then echo latest; fi)
+    cmds:
+      - for: { var: TAGS }
+        cmd: docker run --rm
+          -v "${PWD}/dist/oci/:/tmp/oci/"
+          -v "${HOME}/.docker/config.json:/tmp/auth/config.json"
+          --network="host"
+          quay.io/skopeo/stable:v1.14.0
+          copy
+          --authfile="/tmp/auth/config.json"
+          --multi-arch=all
+          --dest-tls-verify=${CONTAINER_REGISTRY_TLS_VERIFY}
+          -f=v2s2
+          oci-archive:/tmp/oci/image.tar
+          ${CONTAINER_REGISTRY}/opa:{{.ITEM}}
