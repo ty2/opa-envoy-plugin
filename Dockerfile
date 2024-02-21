@@ -4,6 +4,25 @@
 
 ARG BASE
 
+### Builder
+FROM --platform=$BUILDPLATFORM golang:1.22.0 as builder
+
+ENV OUTDIR=/out/usr/local/bin
+RUN mkdir -p ${OUTDIR}
+
+WORKDIR /workspace
+COPY go.mod go.sum /workspace/
+
+RUN go mod download
+
+COPY . /workspace/
+
+ARG TARGETOS
+ARG TARGETARCH
+
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build \
+    -o /out/opa-envoy-plugin cmd/opa-envoy-plugin/main.go
+
 FROM ${BASE}
 
 # Any non-zero number will do, and unfortunately a named user will not, as k8s
@@ -18,8 +37,8 @@ USER ${USER}
 
 WORKDIR /app
 
-COPY opa_envoy_linux_GOARCH /app
+COPY --from=builder /out/ /app/
 
-ENTRYPOINT ["./opa_envoy_linux_GOARCH"]
+ENTRYPOINT ["./opa-envoy-plugin"]
 
 CMD ["run"]
